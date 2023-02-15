@@ -1,0 +1,17 @@
+*.swp
+*.swo
+*.log
+
+__pycache__/
+.mypy_cache/
+venv/
+
+.env
+
+.idea
+
+:memory:
+
+*.html
+*_files/
+*.csv*
