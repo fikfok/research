@@ -11,7 +11,7 @@ from requests_html import AsyncHTMLSession
 
 BASE_URL = "https://www.kinopoisk.ru"
 DEBUG_MODE = True
-YEARS = [2021] #[2021, 2022, 2023] #
+YEARS = [2022] #[2021, 2022, 2023] #
 GET_ONLY_SINGLE_PAGE = True
 SLEEP_TIMEOUT = 1
 RESULT_FILE = "/home/sadovenkoda/python_projects/research/research/kinopoisk/result.csv"
@@ -33,6 +33,10 @@ class Film:
     directors: str | None = None
     producers: str | None = None
     screenwriters: str | None = None
+    actors: str | None = None
+    synopsis: str | None = None
+    rating: str | None = None
+    rating_count: str | None = None
 
 
 cookies = {
@@ -90,6 +94,50 @@ async def get_list_series_page(http_client, year: int, page: int):
     return html_page
 
 
+@lru_cache
+async def get_film_page(http_client, film_link: str):
+    """
+    HTTPX не осуществляет рендер html страницы после получения. Страница с карточкой фильма принимает
+    окончательный вид только после отработки JS скриптов. Например, кнопка просмотра онлайн появляется только после
+    отработки JS скриптов.
+    А вот полный рендер страницы осуществляется библиотекой requests_html и в итоге кнопка просмотра онлайн уже
+    будет добавлена. Потому для скачивания страницы применяется именно она.
+    """
+    if DEBUG_MODE:
+        with open("/home/sadovenkoda/python_projects/research/research/kinopoisk/film_page_2.html") as f:
+            content = f.read()
+            html_page = BeautifulSoup(content, "html.parser")
+    else:
+        url = f"{BASE_URL}{film_link}"
+        with AsyncHTMLSession() as session:
+            response = await session.get(url, cookies=cookies, timeout=5)
+            assert response.status_code == 200
+            html_page = BeautifulSoup(response.text, "html.parser")
+            await asyncio.sleep(SLEEP_TIMEOUT)
+
+        # response = await http_client.get(url, cookies=cookies)
+        # assert response.status_code == 200
+        # html_page = BeautifulSoup(response.text, "html.parser")
+        # await asyncio.sleep(SLEEP_TIMEOUT)
+    return html_page
+
+
+@lru_cache
+async def get_episodes_list_page(http_client, film_link: str):
+    if DEBUG_MODE:
+        with open("/home/sadovenkoda/python_projects/research/research/kinopoisk/list_episodes_1.html") as f:
+            content = f.read()
+            html_page = BeautifulSoup(content, "html.parser")
+    else:
+        film_id = film_link.strip("/").split("/")[1]
+        url = f"{BASE_URL}/film/{film_id}/episodes/"
+        response = await http_client.get(url, cookies=cookies)
+        assert response.status_code == 200
+        html_page = BeautifulSoup(response.text, "html.parser")
+        await asyncio.sleep(SLEEP_TIMEOUT)
+    return html_page
+
+
 def is_page_empty(html_page: BeautifulSoup):
     no_content = html_page.find("h2", attrs={"class": re.compile(r"^styles_heading__")})
     result = no_content.text.strip() if no_content else ""
@@ -116,46 +164,12 @@ def get_film_timing(film_page: BeautifulSoup):
     return timing
 
 
-# def get_directors(film_page: BeautifulSoup):
-#     directors = ""
-#     director_caption_el = film_page.find("div", string="Режиссер")
-#     if directors_wrapper_el := director_caption_el.nextSibling:
-#         directors = ", ".join([el.text.strip() for el in directors_wrapper_el.findAll("a")])
-#     return directors
-
-
-# def get_producers(film_page: BeautifulSoup):
-#     directors = ""
-#     director_caption_el = film_page.find("div", string="Продюсер")
-#     if directors_wrapper_el := director_caption_el.nextSibling:
-#         directors = ", ".join([el.text.strip() for el in directors_wrapper_el.findAll("a")])
-#     return directors
-#
-#
-# def get_screenwriters(film_page: BeautifulSoup):
-#     directors = ""
-#     director_caption_el = film_page.find("div", string="Сценарий")
-#     if directors_wrapper_el := director_caption_el.nextSibling:
-#         directors = ", ".join([el.text.strip() for el in directors_wrapper_el.findAll("a")])
-#     return directors
-
-
 def get_about_film(film_page: BeautifulSoup, data_label: str):
     data = ""
     if data_caption_el := film_page.find("div", string=data_label):
         if data_wrapper_el := data_caption_el.nextSibling:
             data = ", ".join([el.text.strip() for el in data_wrapper_el.findAll("a")])
     return data
-
-
-def get_genres(film_page: BeautifulSoup):
-    genres = ""
-    genres_caption_el = film_page.find("div", string="Жанр")
-    if genres_caption_el:
-        genres_wrapper_el = genres_caption_el.nextSibling
-        genres_el = genres_wrapper_el.findAll("a") if genres_wrapper_el else []
-        genres = ", ".join([el.text.strip() for el in genres_el])
-    return genres
 
 
 def get_film_platforms(film_page: BeautifulSoup):
@@ -179,80 +193,57 @@ def get_film_platforms(film_page: BeautifulSoup):
 
 
 def get_film_link(film_card: BeautifulSoup):
-    links = film_card.findAll("a", attrs={"href": re.compile(r"^/series/\d*/")})
-    link = links[0].get("href") if links else ""
+    link_el = film_card.find("a", attrs={"href": re.compile(r"^/series/\d*/")})
+    link = link_el.get("href") if link_el else ""
     if not link:
-        links = film_card.findAll("a", attrs={"href": re.compile(r"^/film/\d*/")})
-        link = links[0].get("href") if links else ""
+        link_el = film_card.find("a", attrs={"href": re.compile(r"^/film/\d*/")})
+        link = link_el.get("href") if link_el else ""
     return link
 
 
-@lru_cache
-async def get_episodes_list_page(http_client, film_link: str):
-    if DEBUG_MODE:
-        with open("/home/sadovenkoda/python_projects/research/research/kinopoisk/list_episodes_1.html") as f:
-            content = f.read()
-            html_page = BeautifulSoup(content, "html.parser")
-    else:
-        film_id = film_link.strip("/").split("/")[1]
-        url = f"{BASE_URL}/film/{film_id}/episodes/"
-        response = await http_client.get(url, cookies=cookies)
-        assert response.status_code == 200
-        html_page = BeautifulSoup(response.text, "html.parser")
-        await asyncio.sleep(SLEEP_TIMEOUT)
-    return html_page
-
-
 async def get_season_number(http_client, film_link: str, year: int):
-    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
-    link_el = episodes_list_page.find("a", attrs={"name": f"y{year}"})
-    season_caption = "Сезон "
     season_number = ""
-    if link_el:
+    season_caption = "Сезон "
+    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
+    if link_el := episodes_list_page.find("a", attrs={"name": f"y{year}"}):
         if table_el := link_el.findParent("table"):
-            episode_el = table_el.find("h1", string=season_caption)
-            season_number = episode_el.text.strip().replace(season_caption, "") if episode_el else ""
+            if episode_el := table_el.find("h1", string=re.compile(rf"^{season_caption}")):
+                season_number = episode_el.text.strip().replace(season_caption, "")
     return season_number
 
 
 async def get_episodes_count(http_client, film_link: str, year: int):
-    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
-    link_el = episodes_list_page.find("a", attrs={"name": f"y{year}"})
     episodes_count = ""
-    if link_el:
+    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
+    if link_el := episodes_list_page.find("a", attrs={"name": f"y{year}"}):
         if table_el := link_el.findParent("table"):
-            episodes_el = table_el.findAll("span", string=re.compile(r"^Эпизод"))
-            episodes_count = len(episodes_el)
+            episodes_count = len(table_el.findAll("span", string=re.compile(r"^Эпизод")))
     return episodes_count
 
 
-@lru_cache
-async def get_film_page(http_client, film_link: str):
-    """
-    HTTPX не осуществляет рендер html страницы после получения. Страница с карточкой фильма принимает
-    окончательный вид только после отработки JS скриптов. Например, кнопка просмотра онлайн появляется только после
-    отработки JS скриптов.
-    А вот полный рендер страницы осуществляется библиотекой requests_html и в итоге кнопка просмотра онлайн уже
-    будет добавлена. Потому для скачивания страницы применяется именно она.
-    """
-    if DEBUG_MODE:
-        with open("/home/sadovenkoda/python_projects/research/research/kinopoisk/film_page_2.html") as f:
-            content = f.read()
-            html_page = BeautifulSoup(content, "html.parser")
-    else:
-        url = f"{BASE_URL}{film_link}"
+def get_synopsis(film_page: BeautifulSoup):
+    synopsis = ""
+    if synopsis_wrapper_el := film_page.find("div", attrs={"class": re.compile(r"^styles_filmSynopsis__")}):
+        if synopsis_el := synopsis_wrapper_el.find("p"):
+            synopsis = synopsis_el.text.strip()
+    return synopsis
 
-        with AsyncHTMLSession() as session:
-            response = await session.get(url, cookies=cookies, timeout=5)
-            assert response.status_code == 200
-            html_page = BeautifulSoup(response.text, "html.parser")
-            await asyncio.sleep(SLEEP_TIMEOUT)
 
-        # response = await http_client.get(url, cookies=cookies)
-        # assert response.status_code == 200
-        # html_page = BeautifulSoup(response.text, "html.parser")
-        # await asyncio.sleep(SLEEP_TIMEOUT)
-    return html_page
+def get_rating(film_page: BeautifulSoup):
+    rating = ""
+    if rating_wrapper_el := film_page.find("div", attrs={"class": re.compile(r"styles_filmRating__")}):
+        if rating_el := rating_wrapper_el.select_one("span.film-rating-value span"):
+            rating = rating_el.text.strip().replace(".", ",")
+    return rating
+
+
+def get_rating_count(film_page: BeautifulSoup):
+    rating_count = ""
+    if rating_wrapper_el := film_page.find("div", attrs={"class": re.compile(r"styles_filmRating__")}):
+        if count_wrapper_el := rating_wrapper_el.find("div", attrs={"class": re.compile(r"^styles_countBlock__")}):
+            if rating_count_el := count_wrapper_el.find("span", attrs={"class": re.compile(r"^styles_count__")}):
+                rating_count = rating_count_el.text.strip().replace(".", ",")
+    return rating_count
 
 
 async def parse_years(http_client, year: int):
@@ -288,6 +279,10 @@ async def parse_years(http_client, year: int):
                 directors=get_about_film(film_page, "Режиссер"),
                 producers=get_about_film(film_page, "Продюсер"),
                 screenwriters=get_about_film(film_page, "Сценарий"),
+                actors=get_actors(film_page),
+                synopsis=get_synopsis(film_page),
+                rating=get_rating(film_page),
+                rating_count=get_rating_count(film_page),
             )
             films.append(film)
         current_page += 1
@@ -298,10 +293,9 @@ async def parse_years(http_client, year: int):
 
 
 async def get_premiere_date(http_client, film_link: str, year: int):
-    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
-    link_el = episodes_list_page.find("a", attrs={"name": f"y{year}"})
     premiere_date = ""
-    if link_el:
+    episodes_list_page = await get_episodes_list_page(http_client=http_client, film_link=film_link)
+    if link_el := episodes_list_page.find("a", attrs={"name": f"y{year}"}):
         for row in link_el.findParent("table").findAll("tr"):
             if len(row.findAll("td")) >= 2:
                 premiere_date = row.findAll("td")[1].text.strip()
@@ -315,18 +309,20 @@ def get_originals(film_page: BeautifulSoup):
 
 def get_studios(film_page: BeautifulSoup):
     studios_caption = ""
-    studios_el = film_page.find("div", string="Цифровой релиз")
-    if studios_el:
-        studios_data_el = studios_el.nextSibling
-        studios_caption = studios_data_el.text.strip() if studios_data_el else ""
-        studios_caption = re.sub(r"[0-9]{1,2} [а-яА-Я]+ [0-9]{2,4}", "", studios_caption)
-        studios_caption = studios_caption.strip(", ")
-        studios_caption = [txt for txt in studios_caption.split(", ") if txt]
-        studios_caption = ", ".join(studios_caption)
+    if studios_el := film_page.find("div", string="Цифровой релиз"):
+        if studios_data_el := studios_el.nextSibling:
+            studios_caption = studios_data_el.text.strip()
+            studios_caption = re.sub(r"[0-9]{1,2} [а-яА-Я]+ [0-9]{2,4}", "", studios_caption)
+            studios_caption = ", ".join([txt for txt in studios_caption.strip(", ").split(", ") if txt])
     return studios_caption
 
 
-
+def get_actors(film_page: BeautifulSoup):
+    actors = ""
+    if actors_wrapper_el := film_page.find("div", attrs={"class": re.compile(r"^styles_actors__")}):
+        actors = [el.text.strip() for el in actors_wrapper_el.select("li a", attrs={"href": re.compile(r"/name/\d*/")})]
+        actors = ", ".join(actors)
+    return actors
 
 
 async def get_films(http_client):
