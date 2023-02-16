@@ -12,7 +12,7 @@ from requests_html import AsyncHTMLSession
 
 BASE_URL = "https://www.kinopoisk.ru"
 DEBUG_MODE = False
-YEARS = [2021] #[2021, 2022, 2023] #
+YEARS = [2022, 2023] #[2021, 2022, 2023] #
 GET_ONLY_SINGLE_PAGE = False
 SLEEP_TIMEOUT = 1
 RESULT_FILE = "/home/sadovenkoda/python_projects/research/research/kinopoisk/result.csv"
@@ -176,6 +176,10 @@ def get_film_timing(film_page: BeautifulSoup):
         timing_caption = timing_el.text.strip().lower()
         timing_re = re.search(r'^[0-9]+', timing_caption)
         timing = timing_re.group() if timing_re else timing_caption
+        try:
+            timing = str(int(str(timing))).replace(".", ",")
+        except Exception:
+            timing = "0"
     return timing
 
 
@@ -248,7 +252,11 @@ def get_rating(film_page: BeautifulSoup):
     rating = ""
     if rating_wrapper_el := film_page.find("div", attrs={"class": re.compile(r"styles_filmRating__")}):
         if rating_el := rating_wrapper_el.select_one("span.film-rating-value span"):
-            rating = rating_el.text.strip().replace(".", ",")
+            rating = rating_el.text.strip()
+            try:
+                rating = str(float(rating)).replace(".", ",")
+            except Exception:
+                rating = ""
     return rating
 
 
