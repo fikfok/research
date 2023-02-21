@@ -7,14 +7,14 @@ from dataclasses import asdict
 import httpx
 import pandas as pd
 from asyncio_cache import lru_cache
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from requests_html import AsyncHTMLSession
 
 BASE_URL = "https://www.kinopoisk.ru"
 DEBUG_MODE = False
-YEARS = [2022, 2023] #[2021, 2022, 2023] #
+YEARS = [2021, 2022, 2023] #[2022, 2023] #
 GET_ONLY_SINGLE_PAGE = False
-SLEEP_TIMEOUT = 1
+SLEEP_TIMEOUT = 0.1
 RESULT_FILE = "/home/sadovenkoda/python_projects/research/research/kinopoisk/result.csv"
 
 
@@ -80,6 +80,41 @@ cookies = {
     "desktop_session_key": "3dd1717a675414021e2f274de89c34339269006305dcfe2254501457a8e760a8a8f140abbf8074a71429c85d6ea124de0ee36f4a143f69c8bc58bad03df72ed9e86cb1baebfcecb6e7e58de1806169ed795e12704fb07549024d694582c934e8",
     "desktop_session_key.sig": "6fSh9FWiVKBulAyCfogmk6Yq0hk"
 }
+
+
+missed_films = [
+    "https://www.kinopoisk.ru/series/1354943/",
+    "https://www.kinopoisk.ru/series/4474326/",
+    "https://www.kinopoisk.ru/series/4359147/",
+    "https://www.kinopoisk.ru/series/4359104/",
+    "https://www.kinopoisk.ru/series/2045827/",
+    "https://www.kinopoisk.ru/series/4320350/",
+    "https://www.kinopoisk.ru/series/4359627/",
+    "https://www.kinopoisk.ru/series/4391968/",
+    "https://www.kinopoisk.ru/series/4359372/",
+    "https://www.kinopoisk.ru/series/4507074/",
+    "https://www.kinopoisk.ru/series/4359601/",
+    "https://www.kinopoisk.ru/series/4359147/",
+    "https://www.kinopoisk.ru/series/4359104/",
+    "https://www.kinopoisk.ru/series/2045827/",
+    "https://www.kinopoisk.ru/series/4320350/",
+    "https://www.kinopoisk.ru/series/4359627/",
+    "https://www.kinopoisk.ru/series/4391968/",
+    "https://www.kinopoisk.ru/series/4359372/",
+    "https://www.kinopoisk.ru/series/4507074/",
+    "https://www.kinopoisk.ru/series/4359601/",
+    "https://www.kinopoisk.ru/series/5101089/",
+    "https://www.kinopoisk.ru/series/4359147/",
+    "https://www.kinopoisk.ru/series/4359104/",
+    "https://www.kinopoisk.ru/series/2045827/",
+    "https://www.kinopoisk.ru/series/4320350/",
+    "https://www.kinopoisk.ru/series/4359627/",
+    "https://www.kinopoisk.ru/series/4391968/",
+    "https://www.kinopoisk.ru/series/4359372/",
+    "https://www.kinopoisk.ru/series/4507074/",
+    "https://www.kinopoisk.ru/series/4359601/",
+]
+missed_films_flat = ", ".join(missed_films)
 
 
 def _save_page(content: str, file_name: str):
@@ -153,6 +188,26 @@ async def get_episodes_list_page(http_client, film_link: str):
     return html_page
 
 
+@lru_cache
+async def get_persons_page(http_client, film_link: str):
+    if DEBUG_MODE:
+        with open("/home/sadovenkoda/python_projects/research/research/kinopoisk/who_is.html") as f:
+            content = f.read()
+            html_page = BeautifulSoup(content, "html.parser")
+    else:
+        film_id = film_link.strip("/").split("/")[1]
+        url = f"{BASE_URL}/film/{film_id}/cast/who_is/"
+        try:
+            response = await http_client.get(url, cookies=cookies)
+        except Exception:
+            html_page = BeautifulSoup("<!DOCTYPE html><html></html>", "html.parser")
+        else:
+            if response.status_code == 200:
+                html_page = BeautifulSoup(response.text, "html.parser")
+        await asyncio.sleep(SLEEP_TIMEOUT)
+    return html_page
+
+
 def is_page_empty(html_page: BeautifulSoup):
     no_content = html_page.find("h2", attrs={"class": re.compile(r"^styles_heading__")})
     result = no_content.text.strip() if no_content else ""
@@ -189,6 +244,33 @@ def get_about_film(film_page: BeautifulSoup, data_label: str):
         if data_wrapper_el := data_caption_el.nextSibling:
             data = ", ".join([el.text.strip() for el in data_wrapper_el.findAll("a")])
     return data
+
+
+async def get_persons(http_client, film_link: str, person_type: str):
+    persons_page = await get_persons_page(http_client, film_link)
+    persons_names = list()
+    if person_type_caption_el := persons_page.select(f"a[name='{person_type}']"):
+        next_el = person_type_caption_el[0]
+        while next_el:
+            if not isinstance(next_el, NavigableString):
+                if next_el.has_attr('class') and "dub" in next_el['class']:
+                    if person_link_el := next_el.select("div.name a"):
+                        if "/name/" in next_el.select("div.name a")[0]["href"]:
+                            persons_names.append(person_link_el[0].text)
+                    else:
+                        break
+                else:
+                    if hasattr(next_el, "name") and next_el.name == "a":
+                        try:
+                            if next_el["name"] == person_type:
+                                next_el = next_el.nextSibling
+                                continue
+                            elif len(next_el["name"]):
+                                break
+                        except Exception:
+                            a=1
+            next_el = next_el.nextSibling
+    return ", ".join(persons_names)
 
 
 def get_film_platforms(film_page: BeautifulSoup):
@@ -344,11 +426,15 @@ def insert_into_db(con, cur, film: Film):
         f"AND title = '{film.title}'"
     )
     exists_res = cur.execute(exists_query).fetchone()
-    if not exists_res:
-        values = ", ".join([f"'{val}'" for val in asdict(film).values()])
-        query = f"INSERT INTO series VALUES ({values})"
-        cur.execute(query)
-        con.commit()
+    if exists_res:
+        update_values = ", ".join([f"{key} = '{val}'" for key, val in asdict(film).items()])
+        query = f"UPDATE series set {update_values} "
+        query += f"WHERE film_link = '{film.film_link}' AND year = '{film.year}' AND title = '{film.title}'"
+    else:
+        insert_values = ", ".join([f"'{val}'" for val in asdict(film).values()])
+        query = f"INSERT INTO series VALUES ({insert_values})"
+    cur.execute(query)
+    con.commit()
 
 
 async def get_reviews(http_client, film_link):
@@ -448,40 +534,50 @@ async def parse_years(http_client, con, cur, year: int):
 
         for film_card in film_cards:
             film_link = get_film_link(film_card)
-            season = await get_season_number(http_client=http_client, film_link=film_link, year=year)
-            film_page = await get_film_page(http_client=http_client, film_link=film_link)
-            premiere_date = await get_premiere_date(http_client=http_client, film_link=film_link, year=year)
-            episodes_count = await get_episodes_count(http_client=http_client, film_link=film_link, year=year)
-            total_count, positive_count, negative_count, neutral_count = await get_reviews(http_client, film_link)
-            film = Film(
-                title=get_film_title(film_card),
-                film_link=f"{BASE_URL}{film_link}",
-                year=str(year),
-                season=season,
-                timing=get_film_timing(film_page),
-                premiere_date=premiere_date,
-                platforms=get_film_platforms(film_page),
-                originals=get_originals(film_page),
-                episodes_count=episodes_count,
-                genres=get_about_film(film_page, "Жанр"),
-                studios=get_studios(film_page),
-                directors=get_about_film(film_page, "Режиссер"),
-                producers=get_about_film(film_page, "Продюсер"),
-                screenwriters=get_about_film(film_page, "Сценарий"),
-                actors=get_actors(film_page),
-                synopsis=get_synopsis(film_page),
-                rating=get_rating(film_page),
-                rating_count=get_rating_count(film_page),
-                top_250=get_top_250(film_page),
-                imdb=get_imdb(film_page),
-                imdb_count=get_imdb_count(film_page),
-                total_review_count=total_count,
-                positive_review_count=positive_count,
-                negative_review_count=negative_count,
-                neutral_review_count=neutral_count,
-            )
-            insert_into_db(con, cur, film)
-            films.append(film)
+
+            film_id = film_link.strip("/").split("/")[1]
+            if film_id in missed_films_flat:
+
+                season = await get_season_number(http_client=http_client, film_link=film_link, year=year)
+                film_page = await get_film_page(http_client=http_client, film_link=film_link)
+                title = get_film_title(film_card)
+                premiere_date = await get_premiere_date(http_client=http_client, film_link=film_link, year=year)
+                episodes_count = await get_episodes_count(http_client=http_client, film_link=film_link, year=year)
+                total_count, positive_count, negative_count, neutral_count = await get_reviews(http_client, film_link)
+                directors = await get_persons(http_client=http_client, film_link=film_link, person_type="director")
+                producers = await get_persons(http_client=http_client, film_link=film_link, person_type="producer")
+                screenwriters = await get_persons(http_client=http_client, film_link=film_link, person_type="writer")
+                actors = await get_persons(http_client=http_client, film_link=film_link, person_type="actor")
+                film = Film(
+                    title=title,
+                    film_link=f"{BASE_URL}{film_link}",
+                    year=str(year),
+                    season=season,
+                    timing=get_film_timing(film_page),
+                    premiere_date=premiere_date,
+                    platforms=get_film_platforms(film_page),
+                    originals=get_originals(film_page),
+                    episodes_count=episodes_count,
+                    genres=get_about_film(film_page, "Жанр"),
+                    studios=get_studios(film_page),
+                    directors=directors,
+                    producers=producers,
+                    screenwriters=screenwriters,
+                    actors=actors,
+                    synopsis=get_synopsis(film_page),
+                    rating=get_rating(film_page),
+                    rating_count=get_rating_count(film_page),
+                    top_250=get_top_250(film_page),
+                    imdb=get_imdb(film_page),
+                    imdb_count=get_imdb_count(film_page),
+                    total_review_count=total_count,
+                    positive_review_count=positive_count,
+                    negative_review_count=negative_count,
+                    neutral_review_count=neutral_count,
+                )
+                insert_into_db(con, cur, film)
+                films.append(film)
+                print(f"Year: {year}. Page: {current_page}. Film title: {title}")
         current_page += 1
 
         if GET_ONLY_SINGLE_PAGE:
