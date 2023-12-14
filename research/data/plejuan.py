@@ -2,13 +2,13 @@ import pandas as pd
 
 
 shipments = [
-    '/home/fikfok/python_projects/research/research/data/xls/Поставка Казань 11.05.23.xlsx',
-    '/home/fikfok/python_projects/research/research/data/xls/Поставка Казань 24.03.23.xlsx',
+    '/home/ADMSK/dasadovenk/python_projects/research/research/data/xls/Поставка Казань 11.05.23.xlsx',
+    '/home/ADMSK/dasadovenk/python_projects/research/research/data/xls/Поставка Казань 24.03.23.xlsx',
 ]
 
 
 stocks = [
-    '/home/fikfok/python_projects/research/research/data/xls/Отчет по остаткам 23.05.23.xlsx',
+    '/home/ADMSK/dasadovenk/python_projects/research/research/data/xls/Отчет по остаткам 23.05.23.xlsx',
 ]
 
 
